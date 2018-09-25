@@ -17,6 +17,7 @@ import (
 	"gopkg.in/errgo.v1"
 	"gopkg.in/juju/charm.v6"
 	"gopkg.in/juju/charmrepo.v3/csclient/params"
+	"gopkg.in/juju/charmstore.v5/internal/stopwatch"
 	"gopkg.in/macaroon-bakery.v2-unstable/bakery"
 	"gopkg.in/macaroon-bakery.v2-unstable/bakery/mgostorage"
 	"gopkg.in/mgo.v2"
@@ -517,7 +518,9 @@ func (s *Store) NewRevision(id *charm.URL) (int, error) {
 		ReturnNew: true,
 	}
 	var doc mongodoc.LatestRevision
+	sw := stopwatch.New("NewRevision(): s.DB.Revisions().FindId().Apply()")
 	_, err := col.FindId(id).Apply(change, &doc)
+	sw.Done()
 	if err == nil {
 		return doc.Revision, nil
 	}
@@ -529,18 +532,22 @@ func (s *Store) NewRevision(id *charm.URL) (int, error) {
 	if id.Series == "" {
 		// It's multi-series. Choose a revision that's greater
 		// than any existing single-series variant.
+		sw = stopwatch.New("NewRevision(): s.DB.Revisions().Find().Sort().One()")
 		err := col.Find(bson.D{{"baseurl", mongodoc.BaseURL(id)}}).Sort("-revision").One(&doc)
+		sw.Done()
 		if err == nil {
 			firstRev = doc.Revision + 1
 		} else if err != mgo.ErrNotFound {
 			return 0, errgo.Notef(err, "cannot find latest single-series revision")
 		}
 	}
+	sw = stopwatch.New("NewRevision(): s.DB.Revisions().Insert()")
 	err = col.Insert(mongodoc.LatestRevision{
 		URL:      id,
 		BaseURL:  mongodoc.BaseURL(id),
 		Revision: firstRev,
 	})
+	sw.Done()
 	if mgo.IsDup(err) {
 		// We were in a race and they won. Recur to
 		// use the usual increment method to find the id.
@@ -569,6 +576,7 @@ func (s *Store) AddRevision(id *router.ResolvedURL) error {
 func (s *Store) addRevision(id *charm.URL) error {
 	rev := id.Revision
 	id = id.WithRevision(-1)
+	sw := stopwatch.New("addRevision(): s.DB.Revisions().Upsert()")
 	_, err := s.DB.Revisions().Upsert(bson.D{
 		{"_id", id},
 		{"revision", bson.D{{"$lt", rev}}},
@@ -577,6 +585,7 @@ func (s *Store) addRevision(id *charm.URL) error {
 		BaseURL:  mongodoc.BaseURL(id),
 		Revision: rev,
 	})
+	sw.Done()
 	if err == nil {
 		return nil
 	}
@@ -595,6 +604,8 @@ func (s *Store) addRevision(id *charm.URL) error {
 // assumed to be a promulgated entity. If fields is not nil, only its
 // fields will be populated in the returned entities.
 func (s *Store) FindEntity(url *router.ResolvedURL, fields map[string]int) (*mongodoc.Entity, error) {
+	sw := stopwatch.New("FindEntity(): s.DB.Entities().Find().One()")
+	defer sw.Done()
 	q := s.DB.Entities().Find(bson.D{{"_id", &url.URL}})
 	if fields != nil {
 		q = q.Select(fields)
@@ -617,6 +628,8 @@ func (s *Store) FindEntity(url *router.ResolvedURL, fields map[string]int) (*mon
 // is not nil, only its fields will be populated in the returned
 // entities.
 func (s *Store) FindEntities(url *charm.URL, fields map[string]int) ([]*mongodoc.Entity, error) {
+	sw := stopwatch.New("FindEntities(): s.DB.Entities().Find().All()")
+	defer sw.Done()
 	query := s.EntitiesQuery(url)
 	if fields != nil {
 		query = query.Select(fields)
@@ -689,6 +702,8 @@ func (s *Store) FindBestEntity(url *charm.URL, channel params.Channel, fields ma
 // that the URL refers to only one entity and is fully formed. The url may
 // refer to either a user-owned or promulgated charm name.
 func (s *Store) findSingleEntity(url *charm.URL, fields map[string]int) (*mongodoc.Entity, error) {
+	sw := stopwatch.New("findSingleEntity(): s.DB.Entities().Find().One()")
+	defer sw.Done()
 	query := s.EntitiesQuery(url)
 	if fields != nil {
 		query = query.Select(fields)
@@ -850,6 +865,8 @@ func (s *Store) EntitiesQuery(url *charm.URL) *mgo.Query {
 // If fields is not nil, only those fields will be populated in the
 // returned base entity.
 func (s *Store) FindBaseEntity(url *charm.URL, fields map[string]int) (*mongodoc.BaseEntity, error) {
+	sw := stopwatch.New("FindBaseEntity(): s.DB.BaseEntities().Find().One()")
+	defer sw.Done()
 	var query *mgo.Query
 	if url.User == "" {
 		query = s.DB.BaseEntities().Find(bson.D{{"name", url.Name}, {"promulgated", 1}})
@@ -889,6 +906,8 @@ func (s *Store) UpdateEntity(url *router.ResolvedURL, update bson.D) error {
 	if len(update) == 0 {
 		return nil
 	}
+	sw := stopwatch.New("UpdateEntity(): s.DB.Entities().Update()")
+	defer sw.Done()
 	if err := s.DB.Entities().Update(bson.D{{"_id", &url.URL}}, update); err != nil {
 		if err == mgo.ErrNotFound {
 			return errgo.WithCausef(err, params.ErrNotFound, "cannot update %q", url)
@@ -905,6 +924,8 @@ func (s *Store) UpdateBaseEntity(url *router.ResolvedURL, update bson.D) error {
 	if len(update) == 0 {
 		return nil
 	}
+	sw := stopwatch.New("UpdateBaseEntity(): s.DB.BaseEntities().Update()")
+	defer sw.Done()
 	if err := s.DB.BaseEntities().Update(bson.D{{"_id", mongodoc.BaseURL(&url.URL)}}, update); err != nil {
 		if err == mgo.ErrNotFound {
 			return errgo.WithCausef(err, params.ErrNotFound, "cannot update base entity for %q", url)
@@ -1058,6 +1079,8 @@ func (s *Store) SetPromulgated(url *router.ResolvedURL, promulgate bool) error {
 		return nil
 	}
 
+	swIter := stopwatch.New("SetPromulgated(): s.DB.BaseEntities().Find().Iter()")
+
 	// Find any currently promulgated base entities for this charm name.
 	// Under normal circumstances there should be a maximum of one of these,
 	// but we should attempt to recover if there is an error condition.
@@ -1071,10 +1094,13 @@ func (s *Store) SetPromulgated(url *router.ResolvedURL, promulgate bool) error {
 	defer iter.Close()
 	var baseEntity mongodoc.BaseEntity
 	for iter.Next(&baseEntity) {
+		swUnpromul := stopwatch.New("SetPromulgated(): s.DB.BaseEntities().UpdateId()")
 		err := baseEntities.UpdateId(
 			baseEntity.URL,
 			bson.D{{"$set", bson.D{{"promulgated", mongodoc.IntBool(false)}}}},
 		)
+		swUnpromul.Done()
+
 		if err != nil {
 			return errgo.Notef(err, "cannot unpromulgate base entity %q", baseEntity.URL)
 		}
@@ -1082,12 +1108,15 @@ func (s *Store) SetPromulgated(url *router.ResolvedURL, promulgate bool) error {
 			return errgo.Notef(err, "cannot update search entities for %q", baseEntity.URL)
 		}
 	}
+	swIter.Done()
 	if err := iter.Close(); err != nil {
 		return errgo.Notef(err, "cannot close mgo iterator")
 	}
 
+	swPromul := stopwatch.New("SetPromulgated(): s.DB.BaseEntities().UpdateId()")
 	// Set the promulgated flag on the base entity.
 	err := s.DB.BaseEntities().UpdateId(base, bson.D{{"$set", bson.D{{"promulgated", mongodoc.IntBool(true)}}}})
+	swPromul.Done()
 	if err != nil {
 		if errgo.Cause(err) == mgo.ErrNotFound {
 			return errgo.WithCausef(nil, params.ErrNotFound, "base entity %q not found", base)
@@ -1104,7 +1133,7 @@ func (s *Store) SetPromulgated(url *router.ResolvedURL, promulgate bool) error {
 	// select all entities with a matching promulgated URL name. Because of
 	// 2) we are sure that we are only updating all charms or the single
 	// bundle entity.
-
+	swEnterties := stopwatch.New("SetPromulgated(): s.DB.Entities().Find().Iter()")
 	iter = s.DB.Entities().Find(bson.D{{
 		"promulgated-revision", bson.D{{"$gt", -1}},
 	}, {
@@ -1126,6 +1155,7 @@ func (s *Store) SetPromulgated(url *router.ResolvedURL, promulgate bool) error {
 			}
 		}
 	}
+	swEnterties.Done()
 	if err := iter.Err(); err != nil {
 		return errgo.Notef(err, "cannot close mgo iterator")
 	}
@@ -1140,6 +1170,7 @@ func (s *Store) SetPromulgated(url *router.ResolvedURL, promulgate bool) error {
 		Revision        int
 	}
 	latestOwned := make(map[string]result)
+	swEntertiesPipe := stopwatch.New("SetPromulgated(): s.DB.Entities().Pipe().Iter()")
 	iter = s.DB.Entities().Pipe([]bson.D{
 		{{"$match", bson.D{{"baseurl", base}}}},
 		{{"$sort", bson.D{{"revision", 1}}}},
@@ -1150,6 +1181,7 @@ func (s *Store) SetPromulgated(url *router.ResolvedURL, promulgate bool) error {
 			{"revision", bson.D{{"$last", "$revision"}}},
 		}}},
 	}).Iter()
+	swEntertiesPipe.Done()
 	var r result
 	for iter.Next(&r) {
 		latestOwned[r.Series] = r
@@ -1191,6 +1223,7 @@ func (s *Store) SetPromulgated(url *router.ResolvedURL, promulgate bool) error {
 		pID.User = ""
 		pID.Revision = maxRev + 1
 		logger.Infof("updating promulgation URL of %v to %v", r.URL, &pID)
+		swEntertiesUpdate := stopwatch.New("SetPromulgated(): s.DB.Entities().Update()")
 		err := s.DB.Entities().Update(
 			bson.D{
 				{"_id", r.URL},
@@ -1203,6 +1236,7 @@ func (s *Store) SetPromulgated(url *router.ResolvedURL, promulgate bool) error {
 				}},
 			},
 		)
+		swEntertiesUpdate.Done()
 		if err != nil && err != mgo.ErrNotFound {
 			// If we get NotFound it is most likely because the latest owned revision is
 			// already promulgated, so carry on.
@@ -1224,6 +1258,8 @@ func (s *Store) SetPromulgated(url *router.ResolvedURL, promulgate bool) error {
 // channel then the unpublished ACL is updated.
 // This is only provided for testing.
 func (s *Store) SetPerms(id *charm.URL, which string, acl ...string) error {
+	sw := stopwatch.New("SetPerms(): s.DB.BaseEntities().UpdateId()")
+	sw.Done()
 	return s.DB.BaseEntities().UpdateId(mongodoc.BaseURL(id), bson.D{{"$set",
 		bson.D{{"channelacls." + which, acl}},
 	}})
@@ -1234,6 +1270,8 @@ func (s *Store) SetPerms(id *charm.URL, which string, acl ...string) error {
 // in the required slice or provide any interfaces in the
 // provided slice.
 func (s *Store) MatchingInterfacesQuery(required, provided []string) *mgo.Query {
+	sw := stopwatch.New("MatchingInterfacesQuery(): s.DB.Entities().Find()")
+	sw.Done()
 	return s.DB.Entities().Find(bson.D{{
 		"$or", []bson.D{{{
 			"charmrequiredinterfaces", bson.D{{
@@ -1285,6 +1323,8 @@ func (s *Store) AddLog(data *json.RawMessage, logLevel mongodoc.LogLevel, logTyp
 		URLs:  allUrls,
 		Time:  time.Now(),
 	}
+	sw := stopwatch.New("AddLog(): s.DB.Logs().Insert()")
+	sw.Done()
 	if err := s.DB.Logs().Insert(log); err != nil {
 		return errgo.Mask(err)
 	}
@@ -1300,9 +1340,11 @@ func (s *Store) DeleteEntity(id *router.ResolvedURL) error {
 	// that we can refuse to delete the last reference to the
 	// base URL.
 	var entities []*mongodoc.Entity
+	sw := stopwatch.New("DeleteEntity(): s.DB.Entities().Find()")
 	err := s.DB.Entities().Find(bson.D{{"baseurl", mongodoc.BaseURL(&id.URL)}}).
 		Select(FieldSelector("blobhash", "prev5blobhash")).
 		All(&entities)
+	sw.Done()
 	if err != nil {
 		return errgo.Mask(err)
 	}
@@ -1341,6 +1383,8 @@ func (s *Store) DeleteEntity(id *router.ResolvedURL) error {
 		return errgo.WithCausef(nil, params.ErrForbidden, "cannot delete %q because it is the current revision in channels %s", &id.URL, published)
 	}
 	// Remove the entity.
+	swRemove := stopwatch.New("DeleteEntity():s.DB.Entities().RemoveId()")
+	defer swRemove.Done()
 	if err := s.DB.Entities().RemoveId(&id.URL); err != nil {
 		if err == mgo.ErrNotFound {
 			// Someone else got there first.

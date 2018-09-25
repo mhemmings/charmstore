@@ -23,6 +23,7 @@ import (
 	"gopkg.in/httprequest.v1"
 	"gopkg.in/juju/charm.v6"
 	"gopkg.in/juju/charmrepo.v3/csclient/params"
+	"gopkg.in/juju/charmstore.v5/internal/stopwatch"
 	"gopkg.in/macaroon-bakery.v2-unstable/bakery/checkers"
 	"gopkg.in/macaroon-bakery.v2-unstable/bakery/mgostorage"
 	"gopkg.in/macaroon-bakery.v2-unstable/httpbakery"
@@ -1260,6 +1261,7 @@ func (h *ReqHandler) serveChangesPublished(_ http.Header, r *http.Request) (inte
 	if len(tquery) > 0 {
 		findQuery = bson.D{{"uploadtime", tquery}}
 	}
+	sw := stopwatch.New("serveChangesPublished(): h.Store.DB.Entities().Find().Sort()")
 	query := h.Store.DB.Entities().
 		Find(findQuery).
 		Sort("-uploadtime")
@@ -1283,6 +1285,7 @@ func (h *ReqHandler) serveChangesPublished(_ http.Header, r *http.Request) (inte
 			break
 		}
 	}
+	sw.Done()
 	if err := iter.Err(); err != nil {
 		return nil, errgo.Mask(err)
 	}

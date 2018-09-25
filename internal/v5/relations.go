@@ -10,6 +10,7 @@ import (
 	"gopkg.in/errgo.v1"
 	"gopkg.in/juju/charm.v6"
 	"gopkg.in/juju/charmrepo.v3/csclient/params"
+	"gopkg.in/juju/charmstore.v5/internal/stopwatch"
 	"gopkg.in/mgo.v2/bson"
 
 	"gopkg.in/juju/charmstore.v5/internal/charmstore"
@@ -173,6 +174,8 @@ func (h *ReqHandler) metaBundlesContaining(entity *mongodoc.Entity, id *router.R
 	}
 
 	// Retrieve the bundles containing the resulting charm id.
+	sw := stopwatch.New("metaBundlesContaining(): h.Store.DB.Entities().Find().Iter()")
+	defer sw.Done()
 	q := h.Store.DB.Entities().Find(bson.D{{"bundlecharms", &searchId}})
 	iter := h.Cache.Iter(q, charmstore.FieldSelector("bundlecharms", "promulgated-url"))
 	entities, err := allEntities(iter)

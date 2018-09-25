@@ -13,6 +13,7 @@ import (
 	"gopkg.in/juju/charm.v6"
 	"gopkg.in/juju/charm.v6/resource"
 	"gopkg.in/juju/charmrepo.v3/csclient/params"
+	"gopkg.in/juju/charmstore.v5/internal/stopwatch"
 	"gopkg.in/mgo.v2"
 	"gopkg.in/mgo.v2/bson"
 
@@ -109,6 +110,8 @@ func (s *Store) ListResources(id *router.ResolvedURL, channel params.Channel) ([
 func (s *Store) charmResources(baseURL *charm.URL) (map[string]map[int]*mongodoc.Resource, map[string]int, error) {
 	resources := make(map[string]map[int]*mongodoc.Resource)
 	latest := make(map[string]int)
+	sw := stopwatch.New("charmResources(): s.DB.Resources().Find().Iter()")
+	defer sw.Done()
 	iter := s.DB.Resources().Find(bson.D{{"baseurl", baseURL}}).Iter()
 	var r mongodoc.Resource
 	for iter.Next(&r) {
@@ -261,6 +264,8 @@ func (s *Store) addResource(r *mongodoc.Resource, uploadId string) (*mongodoc.Re
 			return nil, errgo.Notef(err, "cannot set owner of upload")
 		}
 	}
+	sw := stopwatch.New("addResource(): s.DB.Resources().Insert()")
+	defer sw.Done()
 	err := s.DB.Resources().Insert(r)
 	if uploadId != "" {
 		if removeErr := s.BlobStore.RemoveUpload(uploadId); removeErr != nil {
@@ -283,6 +288,8 @@ func (s *Store) addResource(r *mongodoc.Resource, uploadId string) (*mongodoc.Re
 // resource.
 func (s *Store) nextResourceRevision(baseURL *charm.URL, name string) (int, error) {
 	var r mongodoc.Resource
+	sw := stopwatch.New("nextResourceRevision(): s.DB.Resources().Find().One()")
+	defer sw.Done()
 	if err := s.DB.Resources().Find(newResourceQuery(baseURL, name, -1)).Sort("-revision").One(&r); err != nil {
 		if err == mgo.ErrNotFound {
 			return 0, nil
@@ -314,6 +321,8 @@ func (s *Store) ResolveResource(url *router.ResolvedURL, name string, revision i
 	}
 	q := newResourceQuery(mongodoc.BaseURL(&url.URL), name, revision)
 	var r mongodoc.Resource
+	sw := stopwatch.New("ResolveResource(): s.DB.Resources().Find().Sort().One()")
+	defer sw.Done()
 	if err := s.DB.Resources().Find(q).Sort("-revision").One(&r); err != nil {
 		if err == mgo.ErrNotFound {
 			suffix := ""

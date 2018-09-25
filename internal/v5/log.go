@@ -12,6 +12,7 @@ import (
 	"gopkg.in/errgo.v1"
 	"gopkg.in/juju/charm.v6"
 	"gopkg.in/juju/charmrepo.v3/csclient/params"
+	"gopkg.in/juju/charmstore.v5/internal/stopwatch"
 	"gopkg.in/mgo.v2/bson"
 
 	"gopkg.in/juju/charmstore.v5/internal/mongodoc"
@@ -79,6 +80,8 @@ func (h *ReqHandler) getLogs(w http.ResponseWriter, req *http.Request) error {
 	outputStarted := false
 	closingContent := "[]"
 	var log mongodoc.Log
+	sw := stopwatch.New("getLogs(): h.Store.DB.Logs().Find().Sort().Skip().Limit().Iter()")
+	defer sw.Done()
 	iter := h.Store.DB.Logs().Find(query).Sort("-_id").Skip(offset).Limit(limit).Iter()
 	for iter.Next(&log) {
 		// Start writing the response body. The logs are streamed, but we wrap

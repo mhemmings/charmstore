@@ -15,6 +15,7 @@ import (
 	"gopkg.in/errgo.v1"
 	"gopkg.in/juju/charm.v6"
 	"gopkg.in/juju/charmrepo.v3/csclient/params"
+	"gopkg.in/juju/charmstore.v5/internal/stopwatch"
 	"gopkg.in/mgo.v2/bson"
 
 	"gopkg.in/juju/charmstore.v5/internal/blobstore"
@@ -186,12 +187,14 @@ func (s *Store) OpenCachedBlobFile(
 	// We update the content entry regardless of whether we've
 	// found a file, so that the next time that serveIcon is called
 	// it can know that we've already looked.
+	sw := stopwatch.New("OpenCachedBlobFile(): s.DB.Entities().UpdateId()")
 	err = s.DB.Entities().UpdateId(
 		entity.URL,
 		bson.D{{"$set",
 			bson.D{{"contents." + string(fileId), zipf}},
 		}},
 	)
+	sw.Done()
 	if err != nil {
 		return nil, errgo.Notef(err, "cannot update %q", entity.URL)
 	}

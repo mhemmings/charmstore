@@ -11,6 +11,7 @@ import (
 	"gopkg.in/errgo.v1"
 	charm "gopkg.in/juju/charm.v6"
 	"gopkg.in/juju/charmrepo.v3/csclient/params"
+	"gopkg.in/juju/charmstore.v5/internal/stopwatch"
 
 	"gopkg.in/juju/charmstore.v5/internal/charmstore"
 	"gopkg.in/juju/charmstore.v5/internal/entitycache"
@@ -35,10 +36,12 @@ func (h *ReqHandler) serveList(_ http.Header, req *http.Request) (interface{}, e
 		return nil, badRequestf(err, "")
 	}
 	var results []*mongodoc.Entity
+	sw := stopwatch.New("serveList(): TODO track db queries")
 	iter := h.Cache.CustomIter(entityCacheListQuery{lq}, nil)
 	for iter.Next() {
 		results = append(results, iter.Entity())
 	}
+	sw.Done()
 	if iter.Err() != nil {
 		return nil, errgo.Notef(err, "error listing charms and bundles")
 	}

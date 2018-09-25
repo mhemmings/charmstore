@@ -14,6 +14,7 @@ import (
 	"gopkg.in/errgo.v1"
 	"gopkg.in/juju/charm.v6"
 	"gopkg.in/juju/charmrepo.v3/csclient/params"
+	"gopkg.in/juju/charmstore.v5/internal/stopwatch"
 	"gopkg.in/mgo.v2"
 	"gopkg.in/mgo.v2/bson"
 
@@ -72,18 +73,24 @@ func (s *stats) key(db StoreDatabase, key []string, write bool) (string, error) 
 		id, found := s.tokenId(key[i])
 		if !found {
 			var t tokenId
+			sw := stopwatch.New("key(): db.StatTokens().Find()")
 			err = tokens.Find(bson.D{{"t", key[i]}}).One(&t)
+			sw.Done()
 			if err == mgo.ErrNotFound {
 				if !write {
 					return "", errgo.WithCausef(nil, params.ErrNotFound, "")
 				}
+				sw = stopwatch.New("key(): db.StatTokens().Count()")
 				t.Id, err = tokens.Count()
+				sw.Done()
 				if err != nil {
 					continue
 				}
 				t.Id++
 				t.Token = key[i]
+				sw = stopwatch.New("key(): db.StatTokens().Insert()")
 				err = tokens.Insert(&t)
+				sw.Done()
 			}
 			if err != nil {
 				continue
@@ -193,7 +200,9 @@ func (s *Store) IncCounterAtTime(key []string, t time.Time) error {
 	// Round to the start of the minute so we get one document per minute at most.
 	t = t.UTC().Add(-time.Duration(t.Second()) * time.Second)
 	counters := s.DB.StatCounters()
+	sw := stopwatch.New("IncCounterAtTime(): s.DB.StatCounters().Upsert()")
 	_, err = counters.Upsert(bson.D{{"k", skey}, {"t", timeToStamp(t)}}, bson.D{{"$inc", bson.D{{"c", 1}}}})
+	sw.Done()
 	return err
 }
 
@@ -347,7 +356,10 @@ func (s *Store) Counters(req *CounterRequest) ([]Counter, error) {
 	} else {
 		query = bson.D{{"k", bson.D{{"$regex", regex}}}, {"t", tquery}}
 	}
+
+	timer := stopwatch.New("Counters(): s.DB.StatCounters().Find().MapReduce()")
 	_, err = countersColl.Find(query).MapReduce(&job, &result)
+	timer.Done()
 	if err != nil {
 		return nil, err
 	}
@@ -386,7 +398,9 @@ func (s *Store) Counters(req *CounterRequest) ([]Counter, error) {
 			token, found := s.stats.idToken(int(id))
 			if !found {
 				var t tokenId
+				timer = stopwatch.New("Counters(): s.DB.StatTokens().Find().One()")
 				err = tokensColl.FindId(id).One(&t)
+				timer.Done()
 				if err == mgo.ErrNotFound {
 					return nil, errgo.Newf("store: internal error; token id not found: %d", id)
 				}

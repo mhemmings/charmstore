@@ -18,6 +18,7 @@ import (
 	"gopkg.in/httprequest.v1"
 	"gopkg.in/juju/charm.v6"
 	"gopkg.in/juju/charmrepo.v3/csclient/params"
+	"gopkg.in/juju/charmstore.v5/internal/stopwatch"
 	"gopkg.in/mgo.v2/bson"
 
 	"gopkg.in/juju/charmstore.v5/internal/charmstore"
@@ -209,6 +210,8 @@ func (h *ReqHandler) servePostArchive(id *charm.URL, w http.ResponseWriter, req 
 		// to mongo than usual.
 		baseEntity, err := h.Cache.BaseEntity(&rid.URL, charmstore.FieldSelector("noingest"))
 		if err != nil || !baseEntity.NoIngest {
+			sw := stopwatch.New("servePostArchive(): h.Store.DB.BaseEntities().UpdateId()")
+			defer sw.Done()
 			if err := h.Store.DB.BaseEntities().UpdateId(mongodoc.BaseURL(&rid.URL), bson.D{{
 				"$set", bson.D{{
 					"noingest", true,

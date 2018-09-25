@@ -19,6 +19,7 @@ import (
 	"gopkg.in/errgo.v1"
 	"gopkg.in/juju/charm.v6"
 	"gopkg.in/juju/charmrepo.v3/csclient/params"
+	"gopkg.in/juju/charmstore.v5/internal/stopwatch"
 	"gopkg.in/mgo.v2"
 	"gopkg.in/mgo.v2/bson"
 	"gopkg.in/yaml.v2"
@@ -621,13 +622,16 @@ func (s *Store) addEntity(entity *mongodoc.Entity) (err error) {
 		ChannelACLs: channelACLs,
 		Promulgated: entity.PromulgatedURL != nil,
 	}
+	sw := stopwatch.New("addEntity(): s.DB.BaseEntities().Insert(baseEntity)")
 	err = s.DB.BaseEntities().Insert(baseEntity)
+	sw.Done()
 	if err != nil && !mgo.IsDup(err) {
 		return errgo.Notef(err, "cannot insert base entity")
 	}
-
+	sw = stopwatch.New("addEntity(): s.DB.BaseEntities().Insert(entity)")
 	// Add the entity to the database.
 	err = s.DB.Entities().Insert(entity)
+	sw.Done()
 	if mgo.IsDup(err) {
 		return params.ErrDuplicateUpload
 	}
@@ -713,6 +717,8 @@ func (s *Store) bundleCharms(ids []string) (map[string]charm.Charm, error) {
 		idKeys = append(idKeys, id)
 	}
 	var entities []mongodoc.Entity
+	sw := stopwatch.New("bundleCharms(): s.DB.Entities().Find().All()")
+	defer sw.Done()
 	if err := s.DB.Entities().
 		Find(bson.D{{"_id", bson.D{{"$in", urls}}}}).
 		All(&entities); err != nil {
